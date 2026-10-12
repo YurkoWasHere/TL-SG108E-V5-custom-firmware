@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>MAC address table</title>
+<style>body{font:15px system-ui,sans-serif;margin:32px;color:#20343c;max-width:1000px}h1{font-size:26px}button{padding:9px 16px;margin-right:8px}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{text-align:left;padding:9px;border-bottom:1px solid #ddd}code{font-size:14px}small{color:#53636a}#status{min-height:24px}</style>
+<h1>MAC address table</h1>
+<p>Read the switch's current forwarding table. Devices may move or age out during a scan.</p>
+<p><button id="read">Read table</button><button id="stop" disabled>Stop</button><button id="save" disabled>Download raw data</button></p>
+<p id="status" role="status">Ready.</p>
+<small>ASIC port numbers are shown; their mapping to the numbered sockets needs hardware verification. VID/FID is the table's VLAN or filtering identifier.</small>
+<table><thead><tr><th>MAC address</th><th>ASIC port</th><th>VID/FID</th><th>Learning</th><th>Type</th><th>Slot</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+const byId=id=>document.getElementById(id);
+let stopped=false, raw='';
+function decodeLine(line){
+  if(!/^[0-9a-f]{4}( [0-9a-f]{4}){7}$/.test(line))throw Error('Invalid table response');
+  const [slot,status,...w]=line.split(' ').map(x=>parseInt(x,16));
+  const mac=[w[2]>>8,w[2]&255,w[1]>>8,w[1]&255,w[0]>>8,w[0]&255];
+  const age=(w[4]>>11)&7, fixed=!!(w[5]&32);
+  if(!(status&0x1000)||(mac[0]&1)||(w[3]&0x1000)||(!age&&!fixed)||mac.every(x=>x===0))return {slot,entry:null};
+  return {slot,entry:[mac.map(x=>x.toString(16).padStart(2,'0')).join(':'),((w[4]>>8)&7)|((w[3]&0x8000)?8:0),(w[3]&0x2000)?w[3]&4095:(w[4]>>3)&15,(w[3]&0x2000)?'IVL':'SVL',fixed?'Static':'Dynamic',slot]};
+}
+byId('stop').onclick=()=>{stopped=true;};
+byId('save').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([raw],{type:'text/plain'}));a.download='mac-table.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+byId('read').onclick=async()=>{
+  stopped=false;raw='';byId('rows').replaceChildren();byId('read').disabled=true;byId('stop').disabled=false;byId('save').disabled=true;
+  let count=0,completed=0;
+  try{
+    for(let block=0;block<65&&!stopped;block++){
+      byId('status').textContent=`Reading block ${block+1} of 65; ${count} entries`;
+      const ctrl=new AbortController(), timer=setTimeout(()=>ctrl.abort(),10000);
+      let text;
+      try{const r=await fetch('/MacTable'+block.toString(16).padStart(2,'0')+'.dat',{cache:'no-store',credentials:'same-origin',signal:ctrl.signal});if(!r.ok)throw Error('HTTP '+r.status);text=await r.text();}finally{clearTimeout(timer);}
+      raw+=text;
+      const lines=text.trim().split('\n');
+      if(lines[0]!=='MACT1')throw Error('Unexpected response; check your login');
+      if(lines.at(-1)!=='END')throw Error('Switch table read failed; scan is incomplete');
+      if(lines.length!==66)throw Error('Incomplete block');
+      const decoded=lines.slice(1,-1).map(decodeLine);
+      decoded.forEach((r,i)=>{if(r.slot!==block*64+i)throw Error('Unexpected slot sequence');});
+      for(const {entry} of decoded){if(!entry)continue;const tr=document.createElement('tr');for(const cell of entry){const td=document.createElement('td');td.textContent=cell;tr.append(td);}byId('rows').append(tr);count++;}
+      completed++;
+    }
+    byId('status').textContent=`${stopped?'Stopped':'Complete'}: ${count} entries; ${completed} of 65 blocks read.`;
+  }catch(e){byId('status').textContent=`${e.message}. ${count} entries from ${completed} complete blocks.`;}
+  finally{byId('read').disabled=false;byId('stop').disabled=true;byId('save').disabled=!raw;}
+};
+</script></html>

@@ -1,0 +1,25 @@
+# Firmware inputs and generated output
+*.bin
+/original/*
+!/original/README.md
+/unpacked/
+/patch/build/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Local tools and credentials
+/.agents/
+/.codex/
+/.aws/
+/.ssh/
+.env
+.env.*
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
